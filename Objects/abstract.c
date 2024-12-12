@@ -1298,15 +1298,15 @@ PyNumber_InPlaceAdd(PyObject *v, PyObject *w)
     if (result == Py_NotImplemented) {
         PySequenceMethods *m = Py_TYPE(v)->tp_as_sequence;
         Py_DECREF(result);
-        if (m != NULL) {
-            binaryfunc func = m->sq_inplace_concat;
-            if (func == NULL)
-                func = m->sq_concat;
-            if (func != NULL) {
-                result = func(v, w);
-                assert(_Py_CheckSlotResult(v, "+=", result != NULL));
-                return result;
-            }
+        if (m && m->sq_inplace_concat) {
+            PyObject *result = m->sq_inplace_concat(v, w);
+            assert(_Py_CheckSlotResult(v, "+=", result != NULL));
+            return result;
+        }
+        if (m && m->sq_concat) {
+            PyObject *res = m->sq_concat(v, w);
+            assert(_Py_CheckSlotResult(v, "+", result != NULL));
+            return result;
         }
         result = binop_type_error(v, w, "+=");
     }
