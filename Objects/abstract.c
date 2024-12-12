@@ -1304,7 +1304,7 @@ PyNumber_InPlaceAdd(PyObject *v, PyObject *w)
             return result;
         }
         if (m && m->sq_concat) {
-            PyObject *res = m->sq_concat(v, w);
+            PyObject *result = m->sq_concat(v, w);
             assert(_Py_CheckSlotResult(v, "+", result != NULL));
             return result;
         }
