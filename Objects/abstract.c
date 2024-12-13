@@ -2807,9 +2807,10 @@ PyObject_GetIter(PyObject *o)
 
     f = t->tp_iter;
     if (f == NULL) {
-        if (PySequence_Check(o))
-            return PySeqIter_New(o);
-        return type_error("'%.200s' object is not iterable", o);
+        PyObject *res = PySeqIter_New(o);
+        if (res == NULL)
+            return type_error("'%.200s' object is not iterable", o);
+        return res;
     }
     else {
         PyObject *res = (*f)(o);
