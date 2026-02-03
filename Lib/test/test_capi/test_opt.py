@@ -4074,6 +4074,39 @@ class TestUopsOptimization(unittest.TestCase):
         self.assertNotIn('_PyJit_TryInitializeTracing', stderr,
                          f"JIT tracer memory leak detected:\n{stderr}")
 
+    def test_load_special_optimization(self):
+
+        class MyContext:
+            def __enter__(self):
+                return self
+            def __exit__(self, *args):
+                return False
+
+        # Use a global variable to allow the optimizer to track type info
+        global _test_ctx
+        _test_ctx = MyContext()
+
+        def testfunc(n):
+            result = 0
+            for i in range(n):
+                with _test_ctx:
+                    result += 1
+            return result
+
+        res = testfunc(TIER2_THRESHOLD)
+        self.assertEqual(res, TIER2_THRESHOLD)
+
+        ex = get_first_executor(testfunc)
+        self.assertIsNotNone(ex)
+        uops = get_opnames(ex)
+
+        self.assertIn("_GUARD_TYPE_VERSION", uops)
+        self.assertIn("_LOAD_CONST_INLINE", uops)
+        self.assertNotIn("_INSERT_NULL", uops)
+        self.assertNotIn("_LOAD_SPECIAL", uops)
+
+        del _test_ctx
+
 def global_identity(x):
     return x
 

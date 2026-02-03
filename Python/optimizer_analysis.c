@@ -355,6 +355,37 @@ lookup_attr(JitOptContext *ctx, _PyBloomFilter *dependencies, _PyUOpInstruction 
     return sym_new_not_null(ctx);
 }
 
+static int
+optimize_load_special(JitOptContext *ctx, _PyBloomFilter *dependencies,
+                      _PyUOpInstruction *this_instr, _PyUOpInstruction *next_instr,
+                      PyTypeObject *type, JitOptRef *method_out, JitOptRef self)
+{
+    assert(next_instr->opcode == _LOAD_SPECIAL);
+
+    int special = next_instr->oparg;
+    PyObject *name = _Py_SpecialMethods[special].name;
+    PyObject *descr = _PyType_Lookup(type, name);
+
+    if (descr && _PyType_HasFeature(Py_TYPE(descr), Py_TPFLAGS_METHOD_DESCRIPTOR)) {
+        uint32_t type_version = type->tp_version_tag;
+        if (type_version != 0) {
+            uint16_t load_op = _Py_IsImmortal(descr)
+                ? _LOAD_CONST_INLINE_BORROW
+                : _LOAD_CONST_INLINE;
+            ADD_OP(_RECORD_TOS_TYPE, 0, 0);
+            ADD_OP(_GUARD_TYPE_VERSION, 0, type_version);
+            ADD_OP(load_op, 0, (uintptr_t)descr);
+            ADD_OP(_SWAP, 2, 0);
+            REPLACE_OP(next_instr, _NOP, 0, 0);
+            PyType_Watch(TYPE_WATCHER_ID, (PyObject *)type);
+            _Py_BloomFilter_Add(dependencies, type);
+            *method_out = sym_new_const(ctx, descr);
+            return 1;
+        }
+    }
+    return 0;
+}
+
 static PyCodeObject *
 get_code_with_logging(_PyUOpInstruction *op)
 {

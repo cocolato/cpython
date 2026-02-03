@@ -2,6 +2,7 @@
 #include "pycore_optimizer.h"
 #include "pycore_uops.h"
 #include "pycore_uop_ids.h"
+#include "internal/pycore_ceval.h"
 #include "internal/pycore_moduleobject.h"
 
 #define op(name, ...) /* NAME is ignored */
@@ -53,6 +54,11 @@ extern void
 eliminate_pop_guard(_PyUOpInstruction *this_instr, JitOptContext *ctx, bool exit);
 
 extern PyCodeObject *get_code(_PyUOpInstruction *op);
+
+extern int
+optimize_load_special(JitOptContext *ctx, _PyBloomFilter *dependencies,
+                      _PyUOpInstruction *this_instr, _PyUOpInstruction *next_instr,
+                      PyTypeObject *type, JitOptRef *method_out, JitOptRef self);
 
 static int
 dummy_func(void) {
@@ -1291,8 +1297,22 @@ dummy_func(void) {
     }
 
     op(_INSERT_NULL, (self -- method_and_self[2])) {
-        method_and_self[0] = sym_new_null(ctx);
-        method_and_self[1] = self;
+        int optimized = 0;
+        if ((this_instr + 1)->opcode == _LOAD_SPECIAL) {
+            PyTypeObject *type = sym_get_type(self);
+            if (type) {
+                optimized = optimize_load_special(ctx, dependencies, this_instr,
+                                                  this_instr + 1, type,
+                                                  &method_and_self[0], self);
+                if (optimized) {
+                    method_and_self[1] = self;
+                }
+            }
+        }
+        if (!optimized) {
+            method_and_self[0] = sym_new_null(ctx);
+            method_and_self[1] = self;
+        }
     }
 
     op(_LOAD_SPECIAL, (method_and_self[2] -- method_and_self[2])) {

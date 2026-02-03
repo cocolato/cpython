@@ -2720,8 +2720,22 @@
             JitOptRef *method_and_self;
             self = stack_pointer[-1];
             method_and_self = &stack_pointer[-1];
-            method_and_self[0] = sym_new_null(ctx);
-            method_and_self[1] = self;
+            int optimized = 0;
+            if ((this_instr + 1)->opcode == _LOAD_SPECIAL) {
+                PyTypeObject *type = sym_get_type(self);
+                if (type) {
+                    optimized = optimize_load_special(ctx, dependencies, this_instr,
+                        this_instr + 1, type,
+                        &method_and_self[0], self);
+                    if (optimized) {
+                        method_and_self[1] = self;
+                    }
+                }
+            }
+            if (!optimized) {
+                method_and_self[0] = sym_new_null(ctx);
+                method_and_self[1] = self;
+            }
             CHECK_STACK_BOUNDS(1);
             stack_pointer += 1;
             ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
