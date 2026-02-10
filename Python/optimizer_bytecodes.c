@@ -87,9 +87,8 @@ dummy_func(void) {
 // BEGIN BYTECODES //
 
     op(_MAKE_HEAP_SAFE, (value -- value)) {
-        // If the value is not borrowed, or is immortal, it's heap-safe.
-        if (!PyJitRef_IsBorrowed(value) ||
-            sym_is_immortal(PyJitRef_Unwrap(value))) {
+        // eliminate _MAKE_HEAP_SAFE when we *know* the value is immortal
+        if (sym_is_immortal(PyJitRef_Unwrap(value))) {
             ADD_OP(_NOP, 0, 0);
         }
         value = PyJitRef_StripReferenceInfo(value);

@@ -1242,8 +1242,7 @@
         case _MAKE_HEAP_SAFE: {
             JitOptRef value;
             value = stack_pointer[-1];
-            if (!PyJitRef_IsBorrowed(value) ||
-                sym_is_immortal(PyJitRef_Unwrap(value))) {
+            if (sym_is_immortal(PyJitRef_Unwrap(value))) {
                 ADD_OP(_NOP, 0, 0);
             }
             value = PyJitRef_StripReferenceInfo(value);
