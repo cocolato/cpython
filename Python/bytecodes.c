@@ -881,24 +881,19 @@ dummy_func(
         }
 
         tier2 op(_UNPACK_INDICES, (container, start, stop -- container, sta, sto)) {
-            Py_ssize_t istart = 0, istop = PY_SSIZE_T_MAX;
-            int err = _PyEval_SliceIndex(PyStackRef_AsPyObjectBorrow(start), &istart);
+            Py_ssize_t istart, istop;
+            int err = _PyEval_UnpackIndices(
+                PyStackRef_AsPyObjectBorrow(start),
+                PyStackRef_AsPyObjectBorrow(stop),
+                PyObject_Length(PyStackRef_AsPyObjectBorrow(container)),
+                &istart, &istop);
             if (err == 0) {
                 ERROR_NO_POP();
             }
-            err = _PyEval_SliceIndex(PyStackRef_AsPyObjectBorrow(stop), &istop);
-            if (err == 0) {
-                ERROR_NO_POP();
-            }
-            Py_ssize_t len = PyObject_Length(PyStackRef_AsPyObjectBorrow(container));
-            if (len < 0) {
-                ERROR_NO_POP();
-            }
-            PySlice_AdjustIndices(len, &istart, &istop, 1);
-            DEOPT_IF(!PyStackRef_CanTagInt(istart));
-            DEOPT_IF(!PyStackRef_CanTagInt(istop));
             PyStackRef_CLOSE(stop);
             PyStackRef_CLOSE(start);
+            assert(PyStackRef_CanTagInt(istart));
+            assert(PyStackRef_CanTagInt(istop));
             sta = PyStackRef_TagInt((intptr_t)istart);
             sto = PyStackRef_TagInt((intptr_t)istop);
         }

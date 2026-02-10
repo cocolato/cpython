@@ -906,21 +906,28 @@
             JitOptRef container;
             JitOptRef res;
             container = stack_pointer[-3];
-            PyTypeObject *type = sym_get_probable_type(container);
+            PyTypeObject *known_type = sym_get_type(container);
+            PyTypeObject *type = known_type ? known_type : sym_get_probable_type(container);
             if (type == &PyList_Type) {
-                ADD_OP(_GUARD_3OS_TYPE, 0, (uintptr_t)type);
+                if (!known_type) {
+                    ADD_OP(_GUARD_3OS_TYPE, 0, (uintptr_t)type);
+                }
                 ADD_OP(_UNPACK_INDICES, 0, 0);
                 ADD_OP(_BINARY_SLICE_LIST, 0, 0);
                 res = sym_new_type(ctx, type);
             }
             else if (type == &PyTuple_Type) {
-                ADD_OP(_GUARD_3OS_TYPE, 0, (uintptr_t)type);
+                if (!known_type) {
+                    ADD_OP(_GUARD_3OS_TYPE, 0, (uintptr_t)type);
+                }
                 ADD_OP(_UNPACK_INDICES, 0, 0);
                 ADD_OP(_BINARY_SLICE_TUPLE, 0, 0);
                 res = sym_new_type(ctx, type);
             }
             else if (type == &PyUnicode_Type) {
-                ADD_OP(_GUARD_3OS_TYPE, 0, (uintptr_t)type);
+                if (!known_type) {
+                    ADD_OP(_GUARD_3OS_TYPE, 0, (uintptr_t)type);
+                }
                 ADD_OP(_UNPACK_INDICES, 0, 0);
                 ADD_OP(_BINARY_SLICE_UNICODE, 0, 0);
                 res = sym_new_type(ctx, type);
@@ -941,8 +948,8 @@
             JitOptRef sto;
             container = stack_pointer[-3];
             (void)container;
-            sta = sym_new_compact_int(ctx);
-            sto = sym_new_compact_int(ctx);
+            sta = sym_new_type(ctx, &PyLong_Type);
+            sto = sym_new_type(ctx, &PyLong_Type);
             stack_pointer[-2] = sta;
             stack_pointer[-1] = sto;
             break;
