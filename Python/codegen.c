@@ -5452,8 +5452,8 @@ is_constant_slice(expr_ty s)
          s->v.Slice.lower->kind == Constant_kind) &&
         (s->v.Slice.upper == NULL ||
          s->v.Slice.upper->kind == Constant_kind) &&
-        (s->v.Slice.step == NULL ||
-         s->v.Slice.step->kind == Constant_kind);
+        s->v.Slice.step != NULL &&
+         s->v.Slice.step->kind == Constant_kind;
 }
 
 static bool

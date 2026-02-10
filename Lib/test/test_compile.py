@@ -1452,10 +1452,10 @@ class TestSpecifics(unittest.TestCase):
         def load():
             return x[a:b] + x [a:] + x[:b] + x[:]
 
-        check_op_count(load, "BINARY_SLICE", 3)
+        check_op_count(load, "BINARY_SLICE", 4)
         check_op_count(load, "BUILD_SLICE", 0)
-        check_consts(load, slice, [slice(None, None, None)])
-        check_op_count(load, "BINARY_OP", 4)
+        check_consts(load, slice, [])
+        check_op_count(load, "BINARY_OP", 3)
 
         def store():
             x[a:b] = y
@@ -1463,10 +1463,10 @@ class TestSpecifics(unittest.TestCase):
             x[:b] = y
             x[:] = y
 
-        check_op_count(store, "STORE_SLICE", 3)
+        check_op_count(store, "STORE_SLICE", 4)
         check_op_count(store, "BUILD_SLICE", 0)
-        check_op_count(store, "STORE_SUBSCR", 1)
-        check_consts(store, slice, [slice(None, None, None)])
+        check_op_count(store, "STORE_SUBSCR", 0)
+        check_consts(store, slice, [])
 
         def long_slice():
             return x[a:b:c]
@@ -1489,11 +1489,11 @@ class TestSpecifics(unittest.TestCase):
         def aug_const():
             x[1:2] += y
 
-        check_op_count(aug_const, "BINARY_SLICE", 0)
-        check_op_count(aug_const, "STORE_SLICE", 0)
-        check_op_count(aug_const, "BINARY_OP", 2)
-        check_op_count(aug_const, "STORE_SUBSCR", 1)
-        check_consts(aug_const, slice, [slice(1, 2)])
+        check_op_count(aug_const, "BINARY_SLICE", 1)
+        check_op_count(aug_const, "STORE_SLICE", 1)
+        check_op_count(aug_const, "BINARY_OP", 1)
+        check_op_count(aug_const, "STORE_SUBSCR", 0)
+        check_consts(aug_const, slice, [])
 
         def compound_const_slice():
             x[1:2:3, 4:5:6] = y
@@ -1519,12 +1519,7 @@ class TestSpecifics(unittest.TestCase):
         check_consts(
             different_but_equal,
             slice,
-            [
-                slice(None, 0, None),
-                slice(None, 0.0, None),
-                slice(None, False, None),
-                slice(None, None, None)
-            ]
+            []
         )
 
     def test_compare_positions(self):
