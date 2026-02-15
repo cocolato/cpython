@@ -117,11 +117,13 @@ dummy_func(void) {
     }
 
     op(_STORE_ATTR_INSTANCE_VALUE, (offset/1, value, owner -- o)) {
+        (void)offset;
         (void)value;
         o = owner;
     }
 
     op(_STORE_ATTR_WITH_HINT, (hint/1, value, owner -- o)) {
+        (void)hint;
         (void)value;
         o = owner;
     }
@@ -328,7 +330,8 @@ dummy_func(void) {
         r = right;
     }
 
-    op(_BINARY_OP_EXTEND, (left, right -- res, l, r)) {
+    op(_BINARY_OP_EXTEND, (descr/4, left, right -- res, l, r)) {
+        (void)descr;
         res = sym_new_not_null(ctx);
         l = left;
         r = right;
@@ -394,7 +397,7 @@ dummy_func(void) {
             assert(PyLong_CheckExact(sym_get_const(ctx, sub_st)));
             long index = PyLong_AsLong(sym_get_const(ctx, sub_st));
             assert(index >= 0);
-            int tuple_length = sym_tuple_length(tuple_st);
+            Py_ssize_t tuple_length = sym_tuple_length(tuple_st);
             if (tuple_length != -1 && index < tuple_length) {
                 ADD_OP(_NOP, 0, 0);
             }
@@ -958,8 +961,7 @@ dummy_func(void) {
             ctx->done = true;
             break;
         }
-
-        int returning_stacklevel = this_instr->operand1;
+        int returning_stacklevel = (int)this_instr->operand1;
         if (ctx->curr_frame_depth >= 2) {
             PyCodeObject *expected_code = ctx->frames[ctx->curr_frame_depth - 2].code;
             if (expected_code == returning_code) {
@@ -987,7 +989,7 @@ dummy_func(void) {
             break;
         }
         _Py_BloomFilter_Add(dependencies, returning_code);
-        int returning_stacklevel = this_instr->operand1;
+        int returning_stacklevel = (int)this_instr->operand1;
         if (frame_pop(ctx, returning_code, returning_stacklevel)) {
             break;
         }
@@ -1008,7 +1010,7 @@ dummy_func(void) {
             break;
         }
         _Py_BloomFilter_Add(dependencies, returning_code);
-        int returning_stacklevel = this_instr->operand1;
+        int returning_stacklevel = (int)this_instr->operand1;
         if (frame_pop(ctx, returning_code, returning_stacklevel)) {
             break;
         }
