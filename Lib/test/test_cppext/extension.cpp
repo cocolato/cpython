@@ -15,11 +15,20 @@
 
 #ifdef TEST_INTERNAL_C_API
    // gh-135906: Check for compiler warnings in the internal C API
+   // - Cython uses pycore_critical_section.h, pycore_frame.h and
+   //   pycore_template.h.
+   // - greenlet uses pycore_frame.h, pycore_interpframe_structs.h and
+   //   pycore_interpframe.h.
 #  include "internal/pycore_frame.h"
-   // mimalloc emits compiler warnings when Python is built on Windows.
+#  include "internal/pycore_interpframe_structs.h"
+#  include "internal/pycore_template.h"
+
+   // mimalloc emits compiler warnings on Windows.
 #  if !defined(MS_WINDOWS)
 #    include "internal/pycore_backoff.h"
 #    include "internal/pycore_cell.h"
+#    include "internal/pycore_critical_section.h"
+#    include "internal/pycore_interpframe.h"
 #  endif
 #endif
 
@@ -232,10 +241,13 @@ test_virtual_object(PyObject *Py_UNUSED(module), PyObject *Py_UNUSED(args))
 static PyObject *
 test_datetime(PyObject *Py_UNUSED(module), PyObject *Py_UNUSED(args))
 {
+    // datetime.h is excluded from the limited C API
+#ifndef Py_LIMITED_API
     PyDateTime_IMPORT;
     if (PyErr_Occurred()) {
         return NULL;
     }
+#endif
 
     Py_RETURN_NONE;
 }

@@ -896,6 +896,7 @@
             right = stack_pointer[-1];
             left = stack_pointer[-2];
             PyObject *descr = (PyObject *)this_instr->operand0;
+            (void)descr;
             res = sym_new_not_null(ctx);
             l = left;
             r = right;
@@ -1108,7 +1109,7 @@
                 assert(PyLong_CheckExact(sym_get_const(ctx, sub_st)));
                 long index = PyLong_AsLong(sym_get_const(ctx, sub_st));
                 assert(index >= 0);
-                int tuple_length = sym_tuple_length(tuple_st);
+                Py_ssize_t tuple_length = sym_tuple_length(tuple_st);
                 if (tuple_length != -1 && index < tuple_length) {
                     ADD_OP(_NOP, 0, 0);
                 }
@@ -1333,7 +1334,7 @@
                 ctx->done = true;
                 break;
             }
-            int returning_stacklevel = this_instr->operand1;
+            int returning_stacklevel = (int)this_instr->operand1;
             if (ctx->curr_frame_depth >= 2) {
                 PyCodeObject *expected_code = ctx->frames[ctx->curr_frame_depth - 2].code;
                 if (expected_code == returning_code) {
@@ -1413,7 +1414,7 @@
                 break;
             }
             _Py_BloomFilter_Add(dependencies, returning_code);
-            int returning_stacklevel = this_instr->operand1;
+            int returning_stacklevel = (int)this_instr->operand1;
             if (frame_pop(ctx, returning_code, returning_stacklevel)) {
                 break;
             }
@@ -2095,6 +2096,7 @@
             owner = stack_pointer[-1];
             value = stack_pointer[-2];
             uint16_t offset = (uint16_t)this_instr->operand0;
+            (void)offset;
             (void)value;
             o = owner;
             CHECK_STACK_BOUNDS(-1);
@@ -2111,6 +2113,7 @@
             owner = stack_pointer[-1];
             value = stack_pointer[-2];
             uint16_t hint = (uint16_t)this_instr->operand0;
+            (void)hint;
             (void)value;
             o = owner;
             CHECK_STACK_BOUNDS(-1);
@@ -3657,7 +3660,7 @@
                 break;
             }
             _Py_BloomFilter_Add(dependencies, returning_code);
-            int returning_stacklevel = this_instr->operand1;
+            int returning_stacklevel = (int)this_instr->operand1;
             if (frame_pop(ctx, returning_code, returning_stacklevel)) {
                 break;
             }
