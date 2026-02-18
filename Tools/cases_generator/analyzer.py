@@ -699,7 +699,6 @@ NON_ESCAPING_FUNCTIONS = (
     "_Py_ReachedRecursionLimit",
     "PyStackRef_IsTaggedInt",
     "PyStackRef_TagInt",
-    "PyStackRef_CanTagInt",
     "PyStackRef_UntagInt",
     "PyStackRef_IncrementTaggedIntNoOverflow",
     "PyStackRef_IsNullOrInt",

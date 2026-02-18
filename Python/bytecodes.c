@@ -866,78 +866,52 @@ dummy_func(
         }
 
         op(_BINARY_SLICE, (container, start, stop -- res)) {
-            PyObject *slice = _PyBuildSlice_ConsumeRefs(PyStackRef_AsPyObjectSteal(start),
-                                                        PyStackRef_AsPyObjectSteal(stop));
+            PyObject *container_o = PyStackRef_AsPyObjectBorrow(container);
+            PyObject *start_o = PyStackRef_AsPyObjectBorrow(start);
+            PyObject *stop_o = PyStackRef_AsPyObjectBorrow(stop);
             PyObject *res_o;
-            // Can't use ERROR_IF() here, because we haven't
-            // DECREF'ed container yet, and we still own slice.
-            if (slice == NULL) {
-                res_o = NULL;
+            if (PyList_CheckExact(container_o) ||
+                PyTuple_CheckExact(container_o) ||
+                PyUnicode_CheckExact(container_o))
+            {
+                Py_ssize_t len = PyUnicode_CheckExact(container_o)
+                    ? PyUnicode_GET_LENGTH(container_o)
+                    : Py_SIZE(container_o);
+                Py_ssize_t istart = 0, istop = PY_SSIZE_T_MAX;
+                if (!_PyEval_SliceIndex(start_o, &istart) ||
+                    !_PyEval_SliceIndex(stop_o, &istop))
+                {
+                    res_o = NULL;
+                }
+                else {
+                    PySlice_AdjustIndices(len, &istart, &istop, 1);
+                    if (PyList_CheckExact(container_o)) {
+                        res_o = PyList_GetSlice(container_o, istart, istop);
+                    }
+                    else if (PyTuple_CheckExact(container_o)) {
+                        res_o = PyTuple_GetSlice(container_o, istart, istop);
+                    }
+                    else {
+                        res_o = PyUnicode_Substring(container_o, istart, istop);
+                    }
+                }
             }
             else {
-                res_o = PyObject_GetItem(PyStackRef_AsPyObjectBorrow(container), slice);
-                Py_DECREF(slice);
+                PyObject *slice = PySlice_New(start_o, stop_o, NULL);
+                if (slice == NULL) {
+                    res_o = NULL;
+                }
+                else {
+                    res_o = PyObject_GetItem(container_o, slice);
+                    Py_DECREF(slice);
+                }
             }
-            PyStackRef_CLOSE(container);
+            DECREF_INPUTS();
             ERROR_IF(res_o == NULL);
             res = PyStackRef_FromPyObjectSteal(res_o);
         }
 
-        tier2 op(_UNPACK_INDICES, (container, start, stop -- container, sta, sto)) {
-            Py_ssize_t istart, istop;
-            int err = _PyEval_UnpackIndices(
-                PyStackRef_AsPyObjectBorrow(start),
-                PyStackRef_AsPyObjectBorrow(stop),
-                PyObject_Length(PyStackRef_AsPyObjectBorrow(container)),
-                &istart, &istop);
-            if (err == 0) {
-                ERROR_NO_POP();
-            }
-            PyStackRef_CLOSE(stop);
-            PyStackRef_CLOSE(start);
-            assert(PyStackRef_CanTagInt(istart));
-            assert(PyStackRef_CanTagInt(istop));
-            sta = PyStackRef_TagInt((intptr_t)istart);
-            sto = PyStackRef_TagInt((intptr_t)istop);
-        }
-
-        tier2 op(_BINARY_SLICE_LIST, (container, start, stop -- res)) {
-            PyObject *container_o = PyStackRef_AsPyObjectBorrow(container);
-            Py_ssize_t istart = PyStackRef_UntagInt(start);
-            Py_ssize_t istop = PyStackRef_UntagInt(stop);
-            DEAD(start);
-            DEAD(stop);
-            PyObject *res_o = PyList_GetSlice(container_o, istart, istop);
-            PyStackRef_CLOSE(container);
-            ERROR_IF(res_o == NULL);
-            res = PyStackRef_FromPyObjectSteal(res_o);
-        }
-
-        tier2 op(_BINARY_SLICE_TUPLE, (container, start, stop -- res)) {
-            PyObject *container_o = PyStackRef_AsPyObjectBorrow(container);
-            Py_ssize_t istart = PyStackRef_UntagInt(start);
-            Py_ssize_t istop = PyStackRef_UntagInt(stop);
-            DEAD(start);
-            DEAD(stop);
-            PyObject *res_o = PyTuple_GetSlice(container_o, istart, istop);
-            PyStackRef_CLOSE(container);
-            ERROR_IF(res_o == NULL);
-            res = PyStackRef_FromPyObjectSteal(res_o);
-        }
-
-        tier2 op(_BINARY_SLICE_UNICODE, (container, start, stop -- res)) {
-            PyObject *container_o = PyStackRef_AsPyObjectBorrow(container);
-            Py_ssize_t istart = PyStackRef_UntagInt(start);
-            Py_ssize_t istop = PyStackRef_UntagInt(stop);
-            DEAD(start);
-            DEAD(stop);
-            PyObject *res_o = PyUnicode_Substring(container_o, istart, istop);
-            PyStackRef_CLOSE(container);
-            ERROR_IF(res_o == NULL);
-            res = PyStackRef_FromPyObjectSteal(res_o);
-        }
-
-        macro(BINARY_SLICE) = _RECORD_3OS_TYPE + _SPECIALIZE_BINARY_SLICE + _BINARY_SLICE;
+        macro(BINARY_SLICE) = _SPECIALIZE_BINARY_SLICE + _BINARY_SLICE;
 
         specializing op(_SPECIALIZE_STORE_SLICE, (v, container, start, stop -- v, container, start, stop)) {
             // Placeholder until we implement STORE_SLICE specialization
@@ -5759,10 +5733,6 @@ dummy_func(
             }
         }
 
-        tier2 op(_GUARD_3OS_TYPE, (ty/4, third, nos, tos -- third, nos, tos)) {
-            EXIT_IF(PyStackRef_TYPE(third) != (PyTypeObject *)ty);
-        }
-
         /* Record ops for jit tracer.
          *
          * NOTE: These uops are NOPs for normal evaluation.
@@ -5778,10 +5748,6 @@ dummy_func(
 
         tier2 op(_RECORD_NOS, (nos, tos -- nos, tos)) {
             RECORD_VALUE(PyStackRef_AsPyObjectBorrow(nos));
-        }
-
-        tier2 op(_RECORD_3OS_TYPE, (third, nos, tos -- third, nos, tos)) {
-            RECORD_VALUE(Py_TYPE(PyStackRef_AsPyObjectBorrow(third)));
         }
 
         tier2 op(_RECORD_NOS_GEN_FUNC, (nos, tos -- nos, tos)) {
