@@ -5206,15 +5206,13 @@
                  PyTuple_CheckExact(container_o) ||
                  PyUnicode_CheckExact(container_o)) &&
                 (start_o == Py_None || PyLong_CheckExact(start_o)) &&
-                (stop_o == Py_None || PyLong_CheckExact(stop_o)))
-            {
+                (stop_o == Py_None || PyLong_CheckExact(stop_o))) {
                 Py_ssize_t len = PyUnicode_CheckExact(container_o)
                 ? PyUnicode_GET_LENGTH(container_o)
             : Py_SIZE(container_o);
                 Py_ssize_t istart = 0, istop = PY_SSIZE_T_MAX;
                 if (!_PyEval_SliceIndex(start_o, &istart) ||
-                    !_PyEval_SliceIndex(stop_o, &istop))
-                {
+                    !_PyEval_SliceIndex(stop_o, &istop)) {
                     res_o = NULL;
                 }
                 else {
