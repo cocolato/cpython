@@ -878,22 +878,20 @@ dummy_func(
                 Py_ssize_t len = PyUnicode_CheckExact(container_o)
                     ? PyUnicode_GET_LENGTH(container_o)
                     : Py_SIZE(container_o);
-                Py_ssize_t istart = 0, istop = PY_SSIZE_T_MAX;
-                if (!_PyEval_SliceIndex(start_o, &istart) ||
-                    !_PyEval_SliceIndex(stop_o, &istop)) {
+                Py_ssize_t istart, istop;
+                int err = _PyEval_UnpackIndices(start_o, stop_o, len,
+                                                      &istart, &istop);
+                if (err == 0) {
                     res_o = NULL;
                 }
+                else if (PyList_CheckExact(container_o)) {
+                    res_o = PyList_GetSlice(container_o, istart, istop);
+                }
+                else if (PyTuple_CheckExact(container_o)) {
+                    res_o = PyTuple_GetSlice(container_o, istart, istop);
+                }
                 else {
-                    PySlice_AdjustIndices(len, &istart, &istop, 1);
-                    if (PyList_CheckExact(container_o)) {
-                        res_o = PyList_GetSlice(container_o, istart, istop);
-                    }
-                    else if (PyTuple_CheckExact(container_o)) {
-                        res_o = PyTuple_GetSlice(container_o, istart, istop);
-                    }
-                    else {
-                        res_o = PyUnicode_Substring(container_o, istart, istop);
-                    }
+                    res_o = PyUnicode_Substring(container_o, istart, istop);
                 }
             }
             else {
