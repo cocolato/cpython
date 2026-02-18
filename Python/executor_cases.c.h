@@ -5202,9 +5202,11 @@
             PyObject *start_o = PyStackRef_AsPyObjectBorrow(start);
             PyObject *stop_o = PyStackRef_AsPyObjectBorrow(stop);
             PyObject *res_o;
-            if (PyList_CheckExact(container_o) ||
-                PyTuple_CheckExact(container_o) ||
-                PyUnicode_CheckExact(container_o))
+            if ((PyList_CheckExact(container_o) ||
+                 PyTuple_CheckExact(container_o) ||
+                 PyUnicode_CheckExact(container_o)) &&
+                (start_o == Py_None || PyLong_CheckExact(start_o)) &&
+                (stop_o == Py_None || PyLong_CheckExact(stop_o)))
             {
                 Py_ssize_t len = PyUnicode_CheckExact(container_o)
                 ? PyUnicode_GET_LENGTH(container_o)
