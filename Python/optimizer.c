@@ -1632,6 +1632,61 @@ bloom_filter_may_contain(_PyBloomFilter *bloom, _PyBloomFilter *hashes)
     return true;
 }
 
+#define BLOOM_ARRAY_INITIAL_CAPACITY 64
+
+static int
+bloom_array_ensure_capacity(PyInterpreterState *interp)
+{
+    if (interp->executor_bloom_count < interp->executor_bloom_capacity) {
+        return 0;
+    }
+    Py_ssize_t new_cap = interp->executor_bloom_capacity == 0
+        ? BLOOM_ARRAY_INITIAL_CAPACITY
+        : interp->executor_bloom_capacity * 2;
+    _PyBloomFilterEntry *new_entries = PyMem_RawRealloc(
+        interp->executor_bloom_entries,
+        (size_t)new_cap * sizeof(_PyBloomFilterEntry));
+    if (new_entries == NULL) {
+        return -1;
+    }
+    interp->executor_bloom_entries = new_entries;
+    interp->executor_bloom_capacity = new_cap;
+    return 0;
+}
+
+static int
+bloom_array_add(PyInterpreterState *interp, _PyExecutorObject *executor)
+{
+    if (bloom_array_ensure_capacity(interp) < 0) {
+        return -1;
+    }
+    Py_ssize_t idx = interp->executor_bloom_count;
+    interp->executor_bloom_entries[idx].bloom = executor->vm_data.bloom;
+    interp->executor_bloom_entries[idx].executor = executor;
+    executor->vm_data.bloom_array_index = idx;
+    interp->executor_bloom_count++;
+    return 0;
+}
+
+static void
+bloom_array_remove(PyInterpreterState *interp, _PyExecutorObject *executor)
+{
+    Py_ssize_t idx = executor->vm_data.bloom_array_index;
+    if (idx < 0) {
+        return;  /* Not in the array */
+    }
+    Py_ssize_t last = interp->executor_bloom_count - 1;
+    assert(idx <= last);
+    if (idx < last) {
+        /* Swap with the last entry */
+        _PyBloomFilterEntry *entries = interp->executor_bloom_entries;
+        entries[idx] = entries[last];
+        entries[idx].executor->vm_data.bloom_array_index = idx;
+    }
+    interp->executor_bloom_count--;
+    executor->vm_data.bloom_array_index = -1;
+}
+
 static void
 link_executor(_PyExecutorObject *executor)
 {
@@ -1652,6 +1707,11 @@ link_executor(_PyExecutorObject *executor)
     }
     /* executor_list_head must be first in list */
     assert(interp->executor_list_head->vm_data.links.previous == NULL);
+    if (bloom_array_add(interp, executor) < 0) {
+        /* OOM: set index to -1 so we don't crash on removal.
+         * InvalidateDependency will fall back to linked list if needed. */
+        executor->vm_data.bloom_array_index = -1;
+    }
 }
 
 static void
@@ -1672,6 +1732,7 @@ unlink_executor(_PyExecutorObject *executor)
         assert(interp->executor_list_head == executor);
         interp->executor_list_head = next;
     }
+    bloom_array_remove(_PyInterpreterState_GET(), executor);
 }
 
 /* This must be called by optimizers before using the executor */
@@ -1681,6 +1742,7 @@ _Py_ExecutorInit(_PyExecutorObject *executor, const _PyBloomFilter *dependency_s
     executor->vm_data.valid = true;
     executor->vm_data.pending_deletion = 0;
     executor->vm_data.code = NULL;
+    executor->vm_data.bloom_array_index = -1;
     for (int i = 0; i < _Py_BLOOM_FILTER_WORDS; i++) {
         executor->vm_data.bloom.bits[i] = dependency_set->bits[i];
     }
@@ -1796,10 +1858,19 @@ _Py_Executor_DependsOn(_PyExecutorObject *executor, void *obj)
 {
     assert(executor->vm_data.valid);
     _Py_BloomFilter_Add(&executor->vm_data.bloom, obj);
+    /* Also update the contiguous bloom filter array copy */
+    Py_ssize_t idx = executor->vm_data.bloom_array_index;
+    if (idx >= 0) {
+        PyInterpreterState *interp = _PyInterpreterState_GET();
+        interp->executor_bloom_entries[idx].bloom = executor->vm_data.bloom;
+    }
 }
 
 /* Invalidate all executors that depend on `obj`
- * May cause other executors to be invalidated as well
+ * May cause other executors to be invalidated as well.
+ *
+ * Scans the contiguous bloom filter array for cache-friendly
+ * access instead of chasing pointers through the linked list.
  */
 void
 _Py_Executors_InvalidateDependency(PyInterpreterState *interp, void *obj, int is_invalidation)
@@ -1807,24 +1878,25 @@ _Py_Executors_InvalidateDependency(PyInterpreterState *interp, void *obj, int is
     _PyBloomFilter obj_filter;
     _Py_BloomFilter_Init(&obj_filter);
     _Py_BloomFilter_Add(&obj_filter, obj);
-    /* Walk the list of executors */
-    /* TO DO -- Use a tree to avoid traversing as many objects */
+
     PyObject *invalidate = PyList_New(0);
     if (invalidate == NULL) {
         goto error;
     }
-    /* Clearing an executor can clear others, so we need to make a list of
-     * executors to invalidate first */
-    for (_PyExecutorObject *exec = interp->executor_list_head; exec != NULL;) {
-        assert(exec->vm_data.valid);
-        _PyExecutorObject *next = exec->vm_data.links.next;
-        if (bloom_filter_may_contain(&exec->vm_data.bloom, &obj_filter) &&
-            PyList_Append(invalidate, (PyObject *)exec))
-        {
-            goto error;
+
+    /* Scan the contiguous bloom filter array.
+     * This avoids pointer-chasing through the executor linked list,
+     * giving much better cache locality for the bloom filter checks. */
+    _PyBloomFilterEntry *entries = interp->executor_bloom_entries;
+    Py_ssize_t count = interp->executor_bloom_count;
+    for (Py_ssize_t i = 0; i < count; i++) {
+        if (bloom_filter_may_contain(&entries[i].bloom, &obj_filter)) {
+            if (PyList_Append(invalidate, (PyObject *)entries[i].executor) < 0) {
+                goto error;
+            }
         }
-        exec = next;
     }
+
     for (Py_ssize_t i = 0; i < PyList_GET_SIZE(invalidate); i++) {
         PyObject *exec = PyList_GET_ITEM(invalidate, i);
         executor_invalidate(exec);

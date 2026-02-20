@@ -128,10 +128,19 @@ typedef struct {
     bool cold;
     uint8_t pending_deletion;
     int32_t index;           // Index of ENTER_EXECUTOR (if code isn't NULL, below).
+    Py_ssize_t bloom_array_index;  // Index in interp->executor_bloom_entries.
     _PyBloomFilter bloom;
     _PyExecutorLinkListNode links;
     PyCodeObject *code;  // Weak (NULL if no corresponding ENTER_EXECUTOR).
 } _PyVMData;
+
+/* Entry in the contiguous bloom filter array.
+ * Packing bloom filters together improves cache locality during
+ * invalidation scans, avoiding pointer-chasing through the linked list. */
+typedef struct _PyBloomFilterEntry {
+    _PyBloomFilter bloom;
+    struct _PyExecutorObject *executor;
+} _PyBloomFilterEntry;
 
 typedef struct _PyExitData {
     uint32_t target;

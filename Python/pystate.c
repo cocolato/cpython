@@ -599,6 +599,9 @@ init_interpreter(PyInterpreterState *interp,
     interp->compiling = false;
     interp->executor_list_head = NULL;
     interp->executor_deletion_list_head = NULL;
+    interp->executor_bloom_entries = NULL;
+    interp->executor_bloom_count = 0;
+    interp->executor_bloom_capacity = 0;
     interp->executor_creation_counter = JIT_CLEANUP_THRESHOLD;
 
     // Initialize optimization configuration from environment variables
@@ -855,6 +858,12 @@ interpreter_clear(PyInterpreterState *interp, PyThreadState *tstate)
 
 #ifdef _Py_TIER2
     _Py_ClearExecutorDeletionList(interp);
+    if (interp->executor_bloom_entries != NULL) {
+        PyMem_RawFree(interp->executor_bloom_entries);
+        interp->executor_bloom_entries = NULL;
+        interp->executor_bloom_count = 0;
+        interp->executor_bloom_capacity = 0;
+    }
 #endif
     _PyAST_Fini(interp);
     _PyAtExit_Fini(interp);

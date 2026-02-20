@@ -974,6 +974,9 @@ struct _is {
     _PyOptimizationConfig opt_config;
     struct _PyExecutorObject *executor_list_head;
     struct _PyExecutorObject *executor_deletion_list_head;
+    struct _PyBloomFilterEntry *executor_bloom_entries;
+    Py_ssize_t executor_bloom_count;
+    Py_ssize_t executor_bloom_capacity;
     struct _PyExecutorObject *cold_executor;
     struct _PyExecutorObject *cold_dynamic_executor;
     size_t executor_creation_counter;
