@@ -1,6 +1,7 @@
 /* Execute compiled code */
 
 #include "ceval.h"
+#include "pycore_long.h"
 
 int
 Py_GetRecursionLimit(void)
@@ -2886,7 +2887,22 @@ _PyEval_SliceIndex(PyObject *v, Py_ssize_t *pi)
     PyThreadState *tstate = _PyThreadState_GET();
     if (!Py_IsNone(v)) {
         Py_ssize_t x;
-        if (_PyIndex_Check(v)) {
+        if (PyLong_CheckExact(v)) {
+            // Fast path for compact ints (single digit) -- most slice indices.
+            if (_PyLong_IsCompact((PyLongObject *)v)) {
+                x = _PyLong_CompactValue((PyLongObject *)v);
+            }
+            else {
+                x = PyLong_AsSsize_t(v);
+                if (x == -1 && _PyErr_Occurred(tstate)) {
+                    assert(_PyErr_ExceptionMatches(tstate, PyExc_OverflowError));
+                    _PyErr_Clear(tstate);
+                    x = _PyLong_IsNegative((PyLongObject *)v)
+                        ? PY_SSIZE_T_MIN : PY_SSIZE_T_MAX;
+                }
+            }
+        }
+        else if (_PyIndex_Check(v)) {
             x = PyNumber_AsSsize_t(v, NULL);
             if (x == -1 && _PyErr_Occurred(tstate))
                 return 0;
@@ -2907,7 +2923,21 @@ _PyEval_SliceIndexNotNone(PyObject *v, Py_ssize_t *pi)
 {
     PyThreadState *tstate = _PyThreadState_GET();
     Py_ssize_t x;
-    if (_PyIndex_Check(v)) {
+    if (PyLong_CheckExact(v)) {
+        if (_PyLong_IsCompact((PyLongObject *)v)) {
+            x = _PyLong_CompactValue((PyLongObject *)v);
+        }
+        else {
+            x = PyLong_AsSsize_t(v);
+            if (x == -1 && _PyErr_Occurred(tstate)) {
+                assert(_PyErr_ExceptionMatches(tstate, PyExc_OverflowError));
+                _PyErr_Clear(tstate);
+                x = _PyLong_IsNegative((PyLongObject *)v)
+                    ? PY_SSIZE_T_MIN : PY_SSIZE_T_MAX;
+            }
+        }
+    }
+    else if (_PyIndex_Check(v)) {
         x = PyNumber_AsSsize_t(v, NULL);
         if (x == -1 && _PyErr_Occurred(tstate))
             return 0;

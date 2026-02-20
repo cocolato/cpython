@@ -870,29 +870,14 @@ dummy_func(
             PyObject *start_o = PyStackRef_AsPyObjectBorrow(start);
             PyObject *stop_o = PyStackRef_AsPyObjectBorrow(stop);
             PyObject *res_o;
-            if ((PyList_CheckExact(container_o) ||
-                 PyTuple_CheckExact(container_o) ||
-                 PyUnicode_CheckExact(container_o)) &&
-                (start_o == Py_None || PyLong_CheckExact(start_o)) &&
-                (stop_o == Py_None || PyLong_CheckExact(stop_o))) {
-                Py_ssize_t len = PyUnicode_CheckExact(container_o)
-                    ? PyUnicode_GET_LENGTH(container_o)
-                    : Py_SIZE(container_o);
-                Py_ssize_t istart, istop;
-                int err = _PyEval_UnpackIndices(start_o, stop_o, len,
-                                                      &istart, &istop);
-                if (err == 0) {
-                    res_o = NULL;
-                }
-                else if (PyList_CheckExact(container_o)) {
-                    res_o = PyList_GetSlice(container_o, istart, istop);
-                }
-                else if (PyTuple_CheckExact(container_o)) {
-                    res_o = PyTuple_GetSlice(container_o, istart, istop);
-                }
-                else {
-                    res_o = PyUnicode_Substring(container_o, istart, istop);
-                }
+            if (PyList_CheckExact(container_o)) {
+                res_o = _PyList_BinarySlice(container_o, start_o, stop_o);
+            }
+            else if (PyTuple_CheckExact(container_o)) {
+                res_o = _PyTuple_BinarySlice(container_o, start_o, stop_o);
+            }
+            else if (PyUnicode_CheckExact(container_o)) {
+                res_o = _PyUnicode_BinarySlice(container_o, start_o, stop_o);
             }
             else {
                 PyObject *slice = PySlice_New(start_o, stop_o, NULL);
