@@ -449,9 +449,8 @@ typedef struct _PyOptimizationConfig {
     uint16_t side_exit_initial_value;
     uint16_t side_exit_initial_backoff;
 
-    // Trace fitness thresholds
+    // Trace fitness threshold (overridable via PYTHON_JIT_FITNESS_INITIAL)
     uint16_t fitness_initial;
-    uint16_t fitness_initial_side;
 
     // Optimization flags
     bool specialization_enabled;

@@ -15,22 +15,55 @@ extern "C" {
 #include "pycore_optimizer_types.h"
 #include <stdbool.h>
 
-/* Default fitness configuration values for trace quality control.
- * FITNESS_INITIAL and FITNESS_INITIAL_SIDE can be overridden via
- * PYTHON_JIT_FITNESS_INITIAL and PYTHON_JIT_FITNESS_INITIAL_SIDE */
-#define FITNESS_PER_INSTRUCTION     2
-#define FITNESS_BRANCH_BASE         5
-#define FITNESS_INITIAL             (UOP_MAX_TRACE_LENGTH * FITNESS_PER_INSTRUCTION)
-#define FITNESS_INITIAL_SIDE        (FITNESS_INITIAL * 3 / 5)
-#define FITNESS_BACKWARD_EDGE       (FITNESS_INITIAL / 10)
+/* Fitness system: all values derived from two base parameters.
+ *
+ * MAX_TARGET_LENGTH: desired optimized trace length in uops.
+ * OPTIMIZER_EFFECTIVENESS: recorded-to-optimized uop ratio.
+ *
+ * Invariants (see _Static_assert below):
+ * 1. (MAX_ABSTRACT_FRAME_DEPTH-1) pushes without returns exhausts
+ *    fitness below EXIT_QUALITY_SPECIALIZABLE.
+ * 2. After a backward edge + N_BACKWARD_SLACK instructions, fitness
+ *    reaches EXIT_QUALITY_CLOSE_LOOP.
+ * 3. ~3 balanced branches (with typical inter-branch instructions)
+ *    -> fitness < EXIT_QUALITY_ENTER_EXECUTOR.
+ *    ~4 balanced branches -> fitness < EXIT_QUALITY_DEFAULT.
+ * 4. A call + return pair has near-zero net fitness impact.
+ */
+#define MAX_TARGET_LENGTH          400
+#define OPTIMIZER_EFFECTIVENESS    2
 
-/* Exit quality constants for fitness-based trace termination.
- * Higher values mean better places to stop the trace. */
+#define FITNESS_INITIAL            (MAX_TARGET_LENGTH * OPTIMIZER_EFFECTIVENESS)
 
-#define EXIT_QUALITY_DEFAULT         200
-#define EXIT_QUALITY_CLOSE_LOOP      (4 * EXIT_QUALITY_DEFAULT)
-#define EXIT_QUALITY_ENTER_EXECUTOR  (2 * EXIT_QUALITY_DEFAULT + 100)
-#define EXIT_QUALITY_SPECIALIZABLE   (EXIT_QUALITY_DEFAULT / 4)
+/* Average buffer slots consumed per bytecode (for derived formulas).
+ * Actual per-instruction charging uses real slot counts, not this. */
+#define AVG_SLOTS_PER_INSTRUCTION  6
+
+/* Upper bound for FITNESS_INITIAL (including env var override).
+ * Must be strictly less than UOP_MAX_TRACE_LENGTH so that per-slot
+ * fitness charging guarantees the uop buffer never overflows. */
+#define FITNESS_INITIAL_MAX        900
+
+/* Exit quality: higher = better place to stop the trace */
+#define EXIT_QUALITY_CLOSE_LOOP      (FITNESS_INITIAL / 2)
+#define EXIT_QUALITY_ENTER_EXECUTOR  (FITNESS_INITIAL * 3 / 8)
+#define EXIT_QUALITY_DEFAULT         (FITNESS_INITIAL / 8)
+#define EXIT_QUALITY_SPECIALIZABLE   (FITNESS_INITIAL / 80)
+
+/* After a backward edge, allow N_BACKWARD_SLACK more instructions
+ * before the trace reaches EXIT_QUALITY_CLOSE_LOOP. */
+#define N_BACKWARD_SLACK           50
+#define FITNESS_BACKWARD_EDGE      (FITNESS_INITIAL - EXIT_QUALITY_CLOSE_LOOP \
+                                      - N_BACKWARD_SLACK * AVG_SLOTS_PER_INSTRUCTION)
+
+/* 5 balanced (50/50) branches exhaust fitness to EXIT_QUALITY_DEFAULT. */
+#define FITNESS_BRANCH_BALANCED    ((FITNESS_INITIAL - EXIT_QUALITY_DEFAULT) / 5)
+
+/* Coroutine / yield-from backward edges (JUMP_BACKWARD_NO_INTERRUPT).
+ * Reduced penalty: these loops have very short bodies and no
+ * _CHECK_PERIODIC, but they are still real backward edges that
+ * must eventually terminate the trace. */
+#define FITNESS_BACKWARD_EDGE_COROUTINE  (FITNESS_BACKWARD_EDGE / 4)
 
 
 typedef struct _PyJitUopBuffer {

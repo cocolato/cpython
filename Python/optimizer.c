@@ -28,6 +28,12 @@
 
 #define MAX_EXECUTORS_SIZE 256
 
+_Static_assert(FITNESS_INITIAL < UOP_MAX_TRACE_LENGTH,
+    "FITNESS_INITIAL must be less than UOP_MAX_TRACE_LENGTH so that "
+    "per-slot fitness charging guarantees the buffer never overflows");
+_Static_assert(FITNESS_INITIAL_MAX < UOP_MAX_TRACE_LENGTH,
+    "FITNESS_INITIAL_MAX (env var cap) must be less than UOP_MAX_TRACE_LENGTH");
+
 // Trace too short, no progress:
 // _START_EXECUTOR
 // _MAKE_WARM
@@ -597,18 +603,17 @@ add_to_trace(
 
 
 /* Compute branch fitness penalty based on how likely the traced path is.
- * The penalty is small when the traced path is common, large when rare.
- * A branch that historically goes the other way gets a heavy penalty. */
+ * Penalty proportional to branch unpredictability.
+ * Fully biased: 0 (predictable branches are nearly free).
+ * Balanced (off_trace=8): FITNESS_BRANCH_BALANCED (~175).
+ * Fully against (off_trace=16): 2 * FITNESS_BRANCH_BALANCED (~350). */
 static inline int
 compute_branch_penalty(uint16_t history, bool branch_taken)
 {
     int taken_count = _Py_popcount32((uint32_t)history);
     int on_trace_count = branch_taken ? taken_count : 16 - taken_count;
     int off_trace = 16 - on_trace_count;
-    /* Linear scaling: off_trace ranges from 0 (fully biased our way)
-     * to 16 (fully biased against us), so the penalty ranges from
-     * FITNESS_BRANCH_BASE to FITNESS_BRANCH_BASE + 32. */
-    return FITNESS_BRANCH_BASE + off_trace * 2;
+    return off_trace * FITNESS_BRANCH_BALANCED / 8;
 }
 
 /* Compute exit quality for the current trace position.
@@ -630,10 +635,13 @@ compute_exit_quality(_Py_CODEUNIT *target_instr, int opcode,
     return EXIT_QUALITY_DEFAULT;
 }
 
+/* Frame penalty derived from runtime fitness_initial.
+ * Guarantees: (MAX_ABSTRACT_FRAME_DEPTH-1) pushes exhaust fitness
+ * below EXIT_QUALITY_SPECIALIZABLE. */
 static inline int32_t
-compute_frame_penalty(const _PyOptimizationConfig *cfg)
+compute_frame_penalty(uint16_t fitness_initial)
 {
-    return (int32_t)cfg->fitness_initial / 30 + 1;
+    return (int32_t)fitness_initial / (MAX_ABSTRACT_FRAME_DEPTH - 1) + 1;
 }
 
 static int
@@ -816,6 +824,10 @@ _PyJit_translate_single_bytecode_to_trace(
         goto done;
     }
 
+    // Snapshot buffer positions to measure actual slot consumption.
+    _PyUOpInstruction *next_before = trace->next;
+    _PyUOpInstruction *end_before = trace->end;
+
     // One for possible _DEOPT, one because _CHECK_VALIDITY itself might _DEOPT
     trace->end -= 2;
 
@@ -880,29 +892,13 @@ _PyJit_translate_single_bytecode_to_trace(
             tracer->translator_state.fitness -= FITNESS_BACKWARD_EDGE;
             DPRINTF(3, "  backward edge penalty: -%d -> fitness=%d\n",
                     FITNESS_BACKWARD_EDGE, tracer->translator_state.fitness);
-            _Py_FALLTHROUGH;
-        case JUMP_BACKWARD_NO_INTERRUPT:
-        {
-            if ((next_instr != tracer->initial_state.close_loop_instr) &&
-                (next_instr != tracer->initial_state.start_instr) &&
-                uop_buffer_length(&tracer->code_buffer) > CODE_SIZE_NO_PROGRESS &&
-                // For side exits, we don't want to terminate them early.
-                tracer->initial_state.exit == NULL &&
-                // These are coroutines, and we want to unroll those usually.
-                opcode != JUMP_BACKWARD_NO_INTERRUPT) {
-                // We encountered a JUMP_BACKWARD but not to the top of our own loop.
-                // We don't want to continue tracing as we might get stuck in the
-                // inner loop. Instead, end the trace where the executor of the
-                // inner loop might start and let the traces rejoin.
-                OPT_STAT_INC(inner_loop);
-                ADD_TO_TRACE(_EXIT_TRACE, 0, 0, target);
-                uop_buffer_last(trace)->operand1 = true; // is_control_flow
-                DPRINTF(2, "JUMP_BACKWARD not to top ends trace %p %p %p\n", next_instr,
-                    tracer->initial_state.close_loop_instr, tracer->initial_state.start_instr);
-                goto done;
-            }
             break;
-        }
+        case JUMP_BACKWARD_NO_INTERRUPT:
+            tracer->translator_state.fitness -= FITNESS_BACKWARD_EDGE_COROUTINE;
+            DPRINTF(3, "  coroutine backward edge penalty: -%d -> fitness=%d\n",
+                    FITNESS_BACKWARD_EDGE_COROUTINE,
+                    tracer->translator_state.fitness);
+            break;
 
         case RESUME:
         case RESUME_CHECK:
@@ -1006,32 +1002,31 @@ _PyJit_translate_single_bytecode_to_trace(
                     _PyJitTracerTranslatorState *ts_depth = &tracer->translator_state;
                     ts_depth->frame_depth++;
                     assert(ts_depth->frame_depth < MAX_ABSTRACT_FRAME_DEPTH);
-                    int32_t frame_penalty = compute_frame_penalty(&tstate->interp->opt_config);
-                    int32_t cost = frame_penalty * ts_depth->frame_depth;
-                    ts_depth->fitness -= cost;
-                    DPRINTF(3, "  _PUSH_FRAME: depth=%d, penalty=-%d (per_frame=%d) -> fitness=%d\n",
-                            ts_depth->frame_depth, cost, frame_penalty,
+                    int32_t frame_penalty = compute_frame_penalty(tstate->interp->opt_config.fitness_initial);
+                    ts_depth->fitness -= frame_penalty;
+                    DPRINTF(3, "  _PUSH_FRAME: depth=%d, penalty=-%d -> fitness=%d\n",
+                            ts_depth->frame_depth, frame_penalty,
                             ts_depth->fitness);
                 }
                 else if (uop == _RETURN_VALUE || uop == _RETURN_GENERATOR || uop == _YIELD_VALUE) {
                     _PyJitTracerTranslatorState *ts_depth = &tracer->translator_state;
-                    int32_t frame_penalty = compute_frame_penalty(&tstate->interp->opt_config);
+                    int32_t frame_penalty = compute_frame_penalty(tstate->interp->opt_config.fitness_initial);
                     if (ts_depth->frame_depth <= 0) {
                         // Underflow: returning from a frame we didn't enter
-                        ts_depth->fitness -= frame_penalty * 2;
+                        ts_depth->fitness -= frame_penalty;
                         DPRINTF(3, "  %s: underflow penalty=-%d -> fitness=%d\n",
-                                _PyOpcode_uop_name[uop], frame_penalty * 2,
+                                _PyOpcode_uop_name[uop], frame_penalty,
                                 ts_depth->fitness);
                     }
                     else {
-                        // Reward returning: small inlined calls should be encouraged
+                        // Reward returning: symmetric with push for near-zero net impact
                         ts_depth->fitness += frame_penalty;
+                        ts_depth->frame_depth--;
                         DPRINTF(3, "  %s: return reward=+%d, depth=%d -> fitness=%d\n",
                                 _PyOpcode_uop_name[uop], frame_penalty,
-                                ts_depth->frame_depth - 1,
+                                ts_depth->frame_depth,
                                 ts_depth->fitness);
                     }
-                    ts_depth->frame_depth = ts_depth->frame_depth <= 0 ? 0 : ts_depth->frame_depth - 1;
                 }
                 else if (_PyUop_Flags[uop] & HAS_RECORDS_VALUE_FLAG) {
                     PyObject *recorded_value = tracer->prev_state.recorded_value;
@@ -1074,12 +1069,17 @@ _PyJit_translate_single_bytecode_to_trace(
         ADD_TO_TRACE(_JUMP_TO_TOP, 0, 0, 0);
         goto done;
     }
-    // Update fitness AFTER translation, BEFORE returning to continue tracing.
-    // This ensures the next iteration's fitness check reflects the cost of
-    // all instructions translated so far.
-    tracer->translator_state.fitness -= FITNESS_PER_INSTRUCTION;
-    DPRINTF(3, "  per-insn cost: -%d -> fitness=%d\n",
-            FITNESS_PER_INSTRUCTION, tracer->translator_state.fitness);
+    // Charge fitness by actual buffer slots consumed (both directions).
+    // This directly ties fitness to buffer usage, ensuring the assert holds.
+    {
+        int32_t slots_fwd = (int32_t)(trace->next - next_before);
+        int32_t slots_rev = (int32_t)(end_before - trace->end);
+        int32_t slots_used = slots_fwd + slots_rev;
+        tracer->translator_state.fitness -= slots_used;
+        DPRINTF(3, "  per-insn cost: -%d (fwd=%d, rev=%d) -> fitness=%d\n",
+                slots_used, slots_fwd, slots_rev,
+                tracer->translator_state.fitness);
+    }
     DPRINTF(2, "Trace continuing (fitness=%d)\n", tracer->translator_state.fitness);
     return 1;
 done:
@@ -1163,16 +1163,14 @@ _PyJit_TryInitializeTracing(
     assert(curr_instr->op.code == JUMP_BACKWARD_JIT || curr_instr->op.code == RESUME_CHECK_JIT || (exit != NULL));
     tracer->initial_state.jump_backward_instr = curr_instr;
 
-    // Initialize fitness tracking state
+    // Initialize fitness tracking state: side traces get less budget based on chain depth
     const _PyOptimizationConfig *cfg = &tstate->interp->opt_config;
     _PyJitTracerTranslatorState *ts = &tracer->translator_state;
-    bool is_side_trace = (exit != NULL);
-    ts->fitness = is_side_trace
-        ? (int32_t)cfg->fitness_initial_side
-        : (int32_t)cfg->fitness_initial;
+    int effective_depth = Py_MIN(chain_depth, 4);
+    ts->fitness = (int32_t)((8 - effective_depth) * cfg->fitness_initial / 8);
     ts->frame_depth = 0;
-    DPRINTF(3, "Fitness init: %s trace, fitness=%d\n",
-            is_side_trace ? "side" : "root", ts->fitness);
+    DPRINTF(3, "Fitness init: chain_depth=%d, fitness=%d\n",
+            chain_depth, ts->fitness);
 
     tracer->is_tracing = true;
     return 1;
