@@ -5582,8 +5582,7 @@ class TestUopsOptimization(unittest.TestCase):
         uops = get_opnames(ex)
 
         self.assertIn("_BINARY_OP_SUBSCR_INIT_CALL", uops)
-        # _POP_TOP_NOP is a sign the optimizer ran and didn't hit contradiction.
-        self.assertGreaterEqual(count_ops(ex, "_POP_TOP_NOP"), 1)
+        self.assertNotIn("_POP_TOP_NOP", uops)
 
     def test_load_attr_property_frame(self):
         class B:
@@ -6214,6 +6213,39 @@ class TestUopsOptimization(unittest.TestCase):
             for _ in range({TIER2_THRESHOLD + 5}):
                 f1()
         """), PYTHON_JIT="1")
+
+    def test_peephole_cancels_adjacent_push_pop(self):
+        def negated_constant(n):
+            x = 0
+            for i in range(n):
+                a = 1
+                result = -a
+                if result < 0:
+                    x += 1
+            return x
+
+        res, ex = self._run_with_optimizer(negated_constant, TIER2_THRESHOLD)
+        self.assertEqual(res, TIER2_THRESHOLD)
+        self.assertIsNotNone(ex)
+        uops = get_opnames(ex)
+        self.assertNotIn("_SWAP", uops)
+        self.assertNotIn("_SWAP_2", uops)
+
+    def test_peephole_removes_redundant_rrot(self):
+        def add(a, b):
+            return a + b
+
+        def testfunc(n):
+            x = 0
+            for _ in range(n):
+                x += add(1, 2)
+            return x
+
+        res, ex = self._run_with_optimizer(testfunc, TIER2_THRESHOLD)
+        self.assertEqual(res, 3 * TIER2_THRESHOLD)
+        self.assertIsNotNone(ex)
+        uops = get_opnames(ex)
+        self.assertNotIn("_RROT_3", uops)
 
 def global_identity(x):
     return x

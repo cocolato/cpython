@@ -719,6 +719,80 @@ const uint16_t op_without_pop[MAX_UOP_ID + 1] = {
     [_POP_TOP_UNICODE] = _NOP,
 };
 
+static int
+previous_non_skip_uop(_PyUOpInstruction *buffer, int pc)
+{
+    while (pc >= 0 && op_skip[buffer[pc].opcode]) {
+        pc--;
+    }
+    return pc;
+}
+
+/* Remove redundant stack shuffles left by constant-folding rewrites:
+ *     push push _SWAP(2) pop
+ *     push push push _RROT_3 pop pop
+ * In both forms, only the push closest to the shuffle survives. */
+static bool
+remove_folded_stack_shuffle(_PyUOpInstruction *buffer, int pc, int arity)
+{
+    int pops[2];
+    int idx = pc;
+    for (int i = 0; i < arity - 1; i++) {
+        if (idx < 0 || !op_without_pop[buffer[idx].opcode]) {
+            return false;
+        }
+        pops[i] = idx;
+        idx = previous_non_skip_uop(buffer, idx - 1);
+    }
+    int shuf = idx;
+    if (shuf < 0) {
+        return false;
+    }
+    uint16_t shuf_op = buffer[shuf].opcode;
+    bool is_shuffle =
+        (arity == 2 && shuf_op == _SWAP && buffer[shuf].oparg == 2) ||
+        (arity == 3 && shuf_op == _RROT_3);
+    if (!is_shuffle) {
+        return false;
+    }
+
+    int dead_pushes[2];
+    for (int i = 0; i < arity; i++) {
+        idx = previous_non_skip_uop(buffer, idx - 1);
+        if (idx < 0) {
+            return false;
+        }
+        uint16_t push_op = buffer[idx].opcode;
+        if (push_op == _COPY || !op_without_push[push_op]) {
+            return false;
+        }
+        if (i > 0) {
+            dead_pushes[i - 1] = idx;
+        }
+    }
+
+    for (int i = 0; i < arity - 1; i++) {
+        buffer[dead_pushes[i]].opcode = _NOP;
+    }
+    buffer[shuf].opcode = _NOP;
+    for (int i = 0; i < arity - 1; i++) {
+        buffer[pops[i]].opcode = _NOP;
+    }
+    return true;
+}
+
+static bool
+remove_adjacent_push_pop(_PyUOpInstruction *buffer, int pc)
+{
+    int last = previous_non_skip_uop(buffer, pc - 1);
+    if (last < 0 || !op_without_push[buffer[last].opcode]) {
+        return false;
+    }
+    buffer[last].opcode = _NOP;
+    buffer[pc].opcode = _NOP;
+    return true;
+}
+
 
 static int
 remove_unneeded_uops(_PyUOpInstruction *buffer, int buffer_size)
@@ -755,21 +829,14 @@ remove_unneeded_uops(_PyUOpInstruction *buffer, int buffer_size)
                 // ...becomes:
                 //     _NOP + _NOP + _POP_TOP + _NOP + _NOP
                 while (op_without_pop[opcode]) {
-                    _PyUOpInstruction *last = &buffer[pc - 1];
-                    while (op_skip[last->opcode]) {
-                        last--;
+                    if (remove_folded_stack_shuffle(buffer, pc, 2) ||
+                        remove_folded_stack_shuffle(buffer, pc, 3) ||
+                        remove_adjacent_push_pop(buffer, pc))
+                    {
+                        opcode = buffer[pc].opcode;
+                        continue;
                     }
-                    if (op_without_push[last->opcode] && op_without_pop[opcode]) {
-                        last->opcode = op_without_push[last->opcode];
-                        opcode = buffer[pc].opcode = op_without_pop[opcode];
-                        if (op_without_pop[last->opcode]) {
-                            opcode = last->opcode;
-                            pc = (int)(last - buffer);
-                        }
-                    }
-                    else {
-                        break;
-                    }
+                    break;
                 }
                 /* _PUSH_FRAME doesn't escape or error, but it
                  * does need the IP for the return address */
