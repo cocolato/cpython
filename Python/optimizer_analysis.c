@@ -719,6 +719,49 @@ const uint16_t op_without_pop[MAX_UOP_ID + 1] = {
     [_POP_TOP_UNICODE] = _NOP,
 };
 
+/* Type analysis has already processed both guards before this cleanup pass.
+ * Require the same side exit so removing the NOS guard preserves deoptimization
+ * behavior. */
+static bool
+combine_matching_tos_nos_guards(
+    _PyUOpInstruction *buffer, int pc, int buffer_size)
+{
+    if (pc + 1 >= buffer_size) {
+        return false;
+    }
+    int tos_opcode = buffer[pc].opcode;
+    int expected_nos_opcode;
+    int combined_opcode;
+    switch (tos_opcode) {
+        case _GUARD_TOS_INT:
+            expected_nos_opcode = _GUARD_NOS_INT;
+            combined_opcode = _GUARD_TOS_AND_NOS_INT;
+            break;
+        case _GUARD_TOS_OVERFLOWED:
+            expected_nos_opcode = _GUARD_NOS_OVERFLOWED;
+            combined_opcode = _GUARD_TOS_AND_NOS_OVERFLOWED;
+            break;
+        case _GUARD_TOS_FLOAT:
+            expected_nos_opcode = _GUARD_NOS_FLOAT;
+            combined_opcode = _GUARD_TOS_AND_NOS_FLOAT;
+            break;
+        case _GUARD_TOS_UNICODE:
+            expected_nos_opcode = _GUARD_NOS_UNICODE;
+            combined_opcode = _GUARD_TOS_AND_NOS_UNICODE;
+            break;
+        default:
+            return false;
+    }
+    if (buffer[pc + 1].opcode != expected_nos_opcode ||
+        uop_get_target(&buffer[pc]) != uop_get_target(&buffer[pc + 1]))
+    {
+        return false;
+    }
+    buffer[pc].opcode = combined_opcode;
+    buffer[pc + 1].opcode = _NOP;
+    return true;
+}
+
 static int
 previous_non_skip_uop(_PyUOpInstruction *buffer, int pc)
 {
@@ -821,6 +864,14 @@ remove_unneeded_uops(_PyUOpInstruction *buffer, int buffer_size)
                     buffer[pc].opcode = _NOP;
                 }
                 break;
+            case _GUARD_TOS_INT:
+            case _GUARD_TOS_OVERFLOWED:
+            case _GUARD_TOS_FLOAT:
+            case _GUARD_TOS_UNICODE:
+                if (combine_matching_tos_nos_guards(buffer, pc, buffer_size)) {
+                    opcode = buffer[pc].opcode;
+                }
+                _Py_FALLTHROUGH;
             case _EXIT_TRACE:
             default:
             {
