@@ -550,6 +550,11 @@ PyAPI_DATA(const _PyOpcodeRecordSlotMap) _PyOpcode_RecordSlotMaps[256];
  * Takes ownership of `value` and returns a new strong reference or NULL.
  */
 PyAPI_FUNC(PyObject *) _PyOpcode_RecordTransformValue(int uop, PyObject *value);
+
+bool _PyJit_MakeCallSiteOpaque(
+    _PyExecutorObject *executor,
+    _PyExitData *exit,
+    _Py_CODEUNIT *target);
 #endif
 
 #ifdef __cplusplus

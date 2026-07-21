@@ -1881,6 +1881,54 @@ executor_invalidate(PyObject *op)
     _PyObject_GC_UNTRACK(op);
 }
 
+/* The cases generator treats this function as non-escaping. It must not run
+ * Python code or modify the frame stack. */
+bool
+_PyJit_MakeCallSiteOpaque(
+    _PyExecutorObject *executor,
+    _PyExitData *exit,
+    _Py_CODEUNIT *target)
+{
+#ifdef Py_GIL_DISABLED
+    return false;
+#else
+    while (target->op.code == EXTENDED_ARG) {
+        target++;
+    }
+    int opcode = _PyOpcode_Deopt[target->op.code];
+    if (opcode != CALL && opcode != CALL_KW) {
+        return false;
+    }
+
+    for (uint32_t i = 0; i < executor->code_size; i++) {
+        const _PyUOpInstruction *inst = &executor->trace[i];
+        opcode = _PyUop_Uncached[inst->opcode];
+        if (opcode != _CHECK_FUNCTION_VERSION &&
+            opcode != _CHECK_FUNCTION_VERSION_KW &&
+            opcode != _CHECK_FUNCTION_VERSION_INLINE &&
+            opcode != _CHECK_METHOD_VERSION &&
+            opcode != _CHECK_METHOD_VERSION_KW)
+        {
+            continue;
+        }
+        if (inst->format != UOP_FORMAT_JUMP ||
+            inst->jump_target >= executor->code_size)
+        {
+            continue;
+        }
+        const _PyUOpInstruction *exit_inst = (
+            &executor->trace[inst->jump_target]);
+        if (_PyUop_Uncached[exit_inst->opcode] == _EXIT_TRACE &&
+            exit_inst->operand0 == (uintptr_t)exit)
+        {
+            exit->executor = _PyExecutor_GetColdDynamicExecutor();
+            return true;
+        }
+    }
+    return false;
+#endif
+}
+
 static int
 executor_clear(PyObject *op)
 {

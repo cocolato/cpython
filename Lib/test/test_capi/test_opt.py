@@ -6215,6 +6215,33 @@ class TestUopsOptimization(unittest.TestCase):
                 f1()
         """), PYTHON_JIT="1")
 
+    def test_polymorphic_call_chain_becomes_opaque(self):
+        depth = 4
+        calls = TIER2_RESUME_THRESHOLD - 2
+
+        def loop(func, n):
+            for _ in range(n):
+                func(None)
+
+        def loop_kw(func, n):
+            for _ in range(n):
+                func(arg=None)
+
+        for caller in (loop, loop_kw):
+            # Each eval has an independent RESUME counter.
+            callees = [eval("lambda arg: None") for _ in range(depth + 1)]
+            for callee in callees:
+                caller(callee, calls)
+            executors = [get_first_executor(caller)]
+            for _ in range(depth):
+                executors = [
+                    _testinternalcapi.get_exit_executor(op[3])
+                    for executor in executors
+                    for op in executor if op[0] == "_EXIT_TRACE"
+                ]
+            uops = [op[0] for executor in executors for op in executor]
+            self.assertIn("_COLD_DYNAMIC_EXIT", uops)
+
 def global_identity(x):
     return x
 
